@@ -1,60 +1,90 @@
-import os
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel
 from openai import OpenAI
-from dotenv import load_dotenv
+import os
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session
+import datetime
 
-# Load environment variables
-load_dotenv()
+# Database setup
+DATABASE_URL = "sqlite:///./nyayamitra.db"
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+# Define Database Model for Consultation History
+class ConsultationModel(Base):
+    __tablename__ = "consultations"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    query = Column(Text, nullable=False)
+    legal_opinion = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+Base.metadata.create_all(bind=engine)
+
+# Dependency to get DB session
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 app = FastAPI(
     title="NyayaMitra Full-Stack Legal API",
-    version="2.0",
-    description="Backend service for multilingual AI legal counsel based on Indian Law."
+    version="2.1",
+    description="Backend service with database persistence for multilingual AI legal counsel."
 )
 
-# Initialize OpenAI client securely (replace with your actual API key if not using environment variables)
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 class LegalRequest(BaseModel):
     query: str
 
 class LegalResponse(BaseModel):
+    id: int
     legal_opinion: str
 
 @app.post("/api/consult", response_model=LegalResponse)
-def consult_legal_counsel(request: LegalRequest):
+def consult_legal_counsel(request: LegalRequest, db: Session = Depends(get_db)):
     if not request.query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty.")
-
+    
     try:
         lawyer_system_prompt = (
-            "You are 'NyayaMitra', a seasoned Advocate enrolled with the Bar Council of India, specializing in the Constitution of India. "
+            "You are 'NyayaMitra', a seasoned Advocate enrolled with the Bar Council of India, specializing in Indian Law. "
             "Structure your response strictly into:\n"
             "1. **Legal Issue Summary**\n"
             "2. **Governing Provisions** (Cite relevant Articles of the Constitution of India or statutes)\n"
             "3. **Legal Position & Analysis**\n"
             "4. **Actionable Recourse** (What legal steps the client can take)\n"
-            "5. **Mandatory Disclaimer:** Conclude with: 'Disclaimer: This response is for preliminary informational purposes only.'\n"
-            "CRITICAL RULE: Automatically detect the language of the user's query (such as Telugu, Hindi, Spanish, French, English, etc.) "
-            "and provide your entire response in that exact same language, while keeping legal terms and statutory sections accurate."
+            "5. **Mandatory Disclaimer** Conclude with: 'Disclaimer: This response is for preliminary information and education only and does not constitute formal legal counsel.'"
         )
-
-        response = client.chat.completions.create(
-            model="gpt-4o",
+        
+        completion = client.chat.completions.create(
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": lawyer_system_prompt},
                 {"role": "user", "content": request.query}
-            ],
-            temperature=0.2
+            ]
         )
-
-        opinion = response.choices[0].message.content
-        return LegalResponse(legal_opinion=opinion)
-
+        
+        opinion = completion.choices[0].message.content
+        
+        # Save query and response to the database
+        db_consultation = ConsultationModel(query=request.query, legal_opinion=opinion)
+        db.add(db_consultation)
+        db.commit()
+        db.refresh(db_consultation)
+        
+        return LegalResponse(id=db_consultation.id, legal_opinion=opinion)
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/")
-def health_check():
-    return {"status": "online", "app": "NyayaMitra API is running successfully"}
+@app.get("/api/history")
+def get_history(db: Session = Depends(get_db)):
+    consultations = db.query(ConsultationModel).order_by(ConsultationModel.created_at.desc()).all()
+    return consultations
