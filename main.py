@@ -88,3 +88,25 @@ def consult_legal_counsel(request: LegalRequest, db: Session = Depends(get_db)):
 def get_history(db: Session = Depends(get_db)):
     consultations = db.query(ConsultationModel).order_by(ConsultationModel.created_at.desc()).all()
     return consultations
+import openai
+from fastapi import File, UploadFile, HTTPException
+
+@app.post("/api/transcribe")
+async def transcribe_audio(file: UploadFile = File(...)):
+    try:
+        # Save the uploaded audio file temporarily
+        audio_bytes = await file.read()
+        temp_file_path = "temp_audio.wav"
+        with open(temp_file_path, "wb") as f:
+            f.write(audio_bytes)
+            
+        # Call OpenAI Whisper API for transcription
+        with open(temp_file_path, "rb") as audio_file:
+            transcript = openai.audio.transcriptions.create(
+                model="whisper-1",
+                file=audio_file
+            )
+            
+        return {"text": transcript.text}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
