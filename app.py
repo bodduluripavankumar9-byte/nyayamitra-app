@@ -9,8 +9,8 @@ st.set_page_config(
 )
 
 # Backend API URL (Local development)
-API_URL = "http://127.0.0.1:8000/api/consult"
-HISTORY_URL = "http://127.0.0.1:8000/api/history"
+API_URL = "https://nyayamitra-app.onrender.com/api/consult"
+HISTORY_URL = "https://nyayamitra-app.onrender.com/api/history"
 
 # Sidebar for Consultation History
 st.sidebar.title("📜 Consultation History")
